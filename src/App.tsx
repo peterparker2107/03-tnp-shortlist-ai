@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   StudentProfile, 
   DEFAULT_STUDENT_PROFILE, 
@@ -6,6 +6,7 @@ import {
   evaluateShortlist,
   PredictionResult 
 } from './lib/predictor';
+import { sanitizeStudentProfile } from './lib/security';
 import { TIET_COMPANIES } from './data/companies';
 import { StudentConfigurator } from './components/StudentConfigurator';
 import { CompanyTable } from './components/CompanyTable';
@@ -86,39 +87,50 @@ export function App() {
     if (!next) sound.click();
   };
 
-  // Compute all company predictions for current student
-  const allPredictions = evaluateAllCompanies(profile);
+  // Memoized company predictions for optimal re-rendering efficiency
+  const allPredictions = useMemo(() => evaluateAllCompanies(profile), [profile]);
 
-  // Current selected company prediction for SHAP
-  const selectedCompany =
-    TIET_COMPANIES.find((c) => c.id === selectedCompanyId) || TIET_COMPANIES[0];
-  const selectedPrediction: PredictionResult = evaluateShortlist(profile, selectedCompany);
+  // Current selected company prediction for SHAP attribution
+  const selectedCompany = useMemo(
+    () => TIET_COMPANIES.find((c) => c.id === selectedCompanyId) || TIET_COMPANIES[0],
+    [selectedCompanyId]
+  );
 
-  // Handlers
-  const handleResetProfile = () => {
+  const selectedPrediction: PredictionResult = useMemo(
+    () => evaluateShortlist(profile, selectedCompany),
+    [profile, selectedCompany]
+  );
+
+  // Sanitized Handlers with zero-trust validation
+  const handleResetProfile = useCallback(() => {
     sound.click();
     setProfile(DEFAULT_STUDENT_PROFILE);
-  };
+  }, []);
 
-  const handleApplySimulated = (simulated: StudentProfile) => {
-    sound.success();
-    setProfile(simulated);
-  };
+  const handleProfileChange = useCallback((updated: Partial<StudentProfile>) => {
+    setProfile((prev) => sanitizeStudentProfile({ ...prev, ...updated }));
+  }, []);
 
-  const handleUpdateOaScore = (oaScore: number, integrity: number) => {
+  const handleApplySimulated = useCallback((simulated: StudentProfile) => {
     sound.success();
-    setProfile((prev) => ({
+    setProfile(sanitizeStudentProfile(simulated));
+  }, []);
+
+  const handleUpdateOaScore = useCallback((oaScore: number, integrity: number) => {
+    sound.success();
+    setProfile((prev) => sanitizeStudentProfile({
       ...prev,
       oaMockScore: oaScore,
       proctorIntegrity: integrity,
     }));
-  };
+  }, []);
 
-  // Top summary stats
-  const eligibleCount = allPredictions.filter((p) => p.isEligible).length;
-  const highChanceCount = allPredictions.filter((p) => p.probability >= 72).length;
-  const avgProbability = Math.round(
-    allPredictions.reduce((acc, p) => acc + p.probability, 0) / allPredictions.length
+  // Memoized top summary KPIs
+  const eligibleCount = useMemo(() => allPredictions.filter((p) => p.isEligible).length, [allPredictions]);
+  const highChanceCount = useMemo(() => allPredictions.filter((p) => p.probability >= 72).length, [allPredictions]);
+  const avgProbability = useMemo(
+    () => Math.round(allPredictions.reduce((acc, p) => acc + p.probability, 0) / (allPredictions.length || 1)),
+    [allPredictions]
   );
 
   return (
@@ -348,7 +360,7 @@ export function App() {
         {/* Student Profile Configurator Panel */}
         <StudentConfigurator
           profile={profile}
-          onChange={setProfile}
+          onChange={handleProfileChange}
           onReset={handleResetProfile}
         />
 
